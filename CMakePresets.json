@@ -1,0 +1,21 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "rpi-cross",
+            "displayName": "Raspberry Pi Cross-Compile",
+            "binaryDir": "${sourceDir}/build/rpi-cross",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/toolchains/rpi-cross.cmake"
+            }
+        },
+        {
+            "name": "rpi-native",
+            "displayName": "Raspberry Pi Native Compilation",
+            "binaryDir": "${sourceDir}/build/rpi-native",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/toolchains/rpi-native.cmake"
+            }
+        }
+    ]
+}
