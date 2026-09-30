@@ -1,29 +1,28 @@
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
 
-set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
-set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/check_var.cmake)
 
-if(DEFINED RPI_SYSROOT)
-    set(RPI_SYSROOT "${RPI_SYSROOT}" CACHE STRING "Path to Raspberry Pi 5 sysroot" FORCE)
-elseif(DEFINED ENV{RPI_SYSROOT})
-    set(RPI_SYSROOT "$ENV{RPI_SYSROOT}" CACHE STRING "Path to Raspberry Pi 5 sysroot" FORCE)
-endif()
-list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES RPI_SYSROOT)
+CHECK_VAR(TOOLCHAIN_DIR "Path to cross-compilation toolchain")
+CHECK_VAR(TARGET_TRIPLE "Target triple (ex. aarch64-none-linux-gnu)")
+set(CMAKE_C_COMPILER ${TOOLCHAIN_DIR}/bin/${TARGET_TRIPLE}-gcc)
+set(CMAKE_CXX_COMPILER ${TOOLCHAIN_DIR}/bin/${TARGET_TRIPLE}-g++)
 
-if(NOT RPI_SYSROOT)
-    message(FATAL_ERROR "RPI_SYSROOT is not set. Please set the RPI_SYSROOT environment variable or pass -DRPI_SYSROOT=...")
-endif()
+CHECK_VAR(RPI_SYSROOT "Path to Raspberry Pi 5 sysroot")
+
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES RPI_SYSROOT TOOLCHAIN_DIR TARGET_TRIPLE)
 
 set(CMAKE_SYSROOT ${RPI_SYSROOT})
 set(CMAKE_FIND_ROOT_PATH ${RPI_SYSROOT})
 
-set(CMAKE_EXE_LINKER_FLAGS "-L${RPI_SYSROOT}/usr/lib/aarch64-linux-gnu -Wl,-rpath-link=${RPI_SYSROOT}/usr/lib/aarch64-linux-gnu" CACHE STRING "" FORCE)
+set(MULTIARCH_PATH "${RPI_SYSROOT}/usr/lib/aarch64-linux-gnu")
+set(CMAKE_EXE_LINKER_FLAGS "--sysroot=${RPI_SYSROOT} -nostdinc -B${MULTIARCH_PATH} -L${MULTIARCH_PATH} -Wl,-rpath-link=${MULTIARCH_PATH}" CACHE STRING "" FORCE)
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}" CACHE STRING "" FORCE)
 set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}" CACHE STRING "" FORCE)
 
-set(CMAKE_C_FLAGS "--sysroot=${RPI_SYSROOT} -isystem ${RPI_SYSROOT}/usr/include/aarch64-linux-gnu" CACHE STRING "" FORCE)
-set(CMAKE_CXX_FLAGS "--sysroot=${RPI_SYSROOT} -isystem ${RPI_SYSROOT}/usr/include/aarch64-linux-gnu" CACHE STRING "" FORCE)
+set(ENV{PKG_CONFIG_DIR} "")
+set(ENV{PKG_CONFIG_LIBDIR} "${MULTIARCH_PATH}/pkgconfig")
+set(ENV{PKG_CONFIG_SYSROOT_DIR} "${CMAKE_SYSROOT}")
 
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
