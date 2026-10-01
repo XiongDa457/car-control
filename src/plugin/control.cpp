@@ -7,7 +7,7 @@
 using namespace ctre::phoenix;
 using namespace ctre::phoenix6;
 
-#define LERP_PER_ITER 0.01;
+#define LERP_PER_ITER 0.08;
 
 class ControlPlugin : public Plugin {
 private:
@@ -52,7 +52,10 @@ public:
         if (target < current_target) current_target = target;
         else current_target += (target - current_target) * LERP_PER_ITER;
 
-        units::turns_per_second_t tps{current_target * 100.0};
+        double target_tps = current_target * 100.0;
+        context->target_tps->store(target_tps);
+
+        units::turns_per_second_t tps{target_tps};
         controls::VelocityVoltage speed_control(tps);
         context->master->SetControl(speed_control.WithUpdateFreqHz(0_Hz).WithSlot(0));
     }

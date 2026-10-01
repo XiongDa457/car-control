@@ -254,6 +254,7 @@ int main() {
 
     std::atomic<bool> safe_to_run{false};
     std::atomic<double> throttle{0.0};
+    std::atomic<double> target_tps{0.0};
 
     PluginContext context = {
         .logger = logger,
@@ -263,7 +264,8 @@ int main() {
         .follower = &follower,
 
         .safe_to_run = &safe_to_run,
-        .throttle = &throttle
+        .throttle = &throttle,
+        .target_tps = &target_tps,
     };
 
     sleep(2);

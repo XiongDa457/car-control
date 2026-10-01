@@ -16,6 +16,7 @@ struct PluginContext {
 
     std::atomic<bool> *safe_to_run;
     std::atomic<double> *throttle;
+    std::atomic<double> *target_tps;
 };
 
 class Plugin {
