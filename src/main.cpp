@@ -188,6 +188,7 @@ PluginSettings plugin_settings[] = {
         .path = "./plugin/libcontrol.so",
         .pin_core = 3,
         .priority = 75,
+        .loop_ms = 5,
     },
     {
         .name = "telemetry",
@@ -251,11 +252,18 @@ int main() {
     controls::Follower follow_request{0, false};
     follower.SetControl(follow_request);
 
+    std::atomic<bool> safe_to_run{false};
+    std::atomic<double> throttle{0.0};
+
     PluginContext context = {
         .logger = logger,
+
         .bus = &can_bus,
         .master = &master,
         .follower = &follower,
+
+        .safe_to_run = &safe_to_run,
+        .throttle = &throttle
     };
 
     sleep(2);

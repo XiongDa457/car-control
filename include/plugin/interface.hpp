@@ -13,6 +13,9 @@ struct PluginContext {
     ctre::phoenix6::CANBus *bus;
     ctre::phoenix6::hardware::TalonFX *master;
     ctre::phoenix6::hardware::TalonFX *follower;
+
+    std::atomic<bool> *safe_to_run;
+    std::atomic<double> *throttle;
 };
 
 class Plugin {
@@ -23,7 +26,7 @@ protected:
     virtual void initialize() {}
 
 public:
-    Plugin(const PluginContext *context) {
+    explicit Plugin(const PluginContext *context) {
         logger = context->logger;
         this->context = context;
         initialize();

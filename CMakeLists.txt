@@ -1,14 +1,16 @@
 cmake_minimum_required(VERSION 3.31)
 
+project(auto-club CXX)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-project(auto-club CXX)
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_var.cmake)
 
 add_compile_options(-Wno-psabi -O3)
 
-set(BUILD_SHARED_LIBS on)
+set(BUILD_SHARED_LIBS ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/dist")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 
@@ -24,7 +26,13 @@ set_target_properties(phoenix6 PROPERTIES
 find_package(spdlog REQUIRED)
 add_compile_definitions(SPDLOG_DISABLE_DEFAULT_LOGGER)
 
+set(PREV_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS OFF)
+set(HTTPLIB_COMPILE ON)
 add_subdirectory(external/cpp-httplib)
+set_property(TARGET httplib PROPERTY POSITION_INDEPENDENT_CODE ON)
+set(BUILD_SHARED_LIBS ${PREV_BUILD_SHARED_LIBS})
+
 add_subdirectory(external/json)
 
 add_executable(car_host
@@ -37,6 +45,9 @@ PRIVATE
     phoenix6
     spdlog::spdlog
 )
+
+set(OUTPUT_DIR_PRE ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR_PRE}/plugin)
 
 add_library(control MODULE
     src/plugin/control.cpp
@@ -68,6 +79,8 @@ PRIVATE
     httplib::httplib
     nlohmann_json::nlohmann_json
 )
+
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR_PRE})
 
 CHECK_VAR(RPI_HOST "Hostname of the raspberry pi")
 CHECK_VAR(RPI_USER "User to login on the raspberry pi")
