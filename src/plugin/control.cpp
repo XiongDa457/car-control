@@ -15,27 +15,24 @@ private:
 
     void initialize() override {
         configs::TalonFXConfiguration motor_config =
-        configs::TalonFXConfiguration{}
-            .WithCurrentLimits(
-                configs::CurrentLimitsConfigs{}
-                    .WithStatorCurrentLimit(120_A)
-                    .WithStatorCurrentLimitEnable(true)
-                    .WithSupplyCurrentLimit(80_A)
-                    .WithSupplyCurrentLimitEnable(true)
-                    .WithSupplyCurrentLowerLimit(40_A)
-                    .WithSupplyCurrentLowerTime(2.0_s)
-            )
-            .WithMotorOutput(
-                configs::MotorOutputConfigs{}
-                    .WithPeakForwardDutyCycle(1.0)
-                    .WithPeakReverseDutyCycle(0.0)
-            )
-            .WithSlot0(
-                configs::Slot0Configs{}
-                    .WithKV(0.12)
-                    .WithKP(0.003)
-            );
-        
+            configs::TalonFXConfiguration{}
+                .WithCurrentLimits(
+                    configs::CurrentLimitsConfigs{}
+                        .WithStatorCurrentLimit(120_A)
+                        .WithStatorCurrentLimitEnable(true)
+                        .WithSupplyCurrentLimit(80_A)
+                        .WithSupplyCurrentLimitEnable(true)
+                        .WithSupplyCurrentLowerLimit(40_A)
+                        .WithSupplyCurrentLowerTime(2.0_s))
+                .WithMotorOutput(
+                    configs::MotorOutputConfigs{}
+                        .WithPeakForwardDutyCycle(1.0)
+                        .WithPeakReverseDutyCycle(0.0))
+                .WithSlot0(
+                    configs::Slot0Configs{}
+                        .WithKV(0.12)
+                        .WithKP(0.004));
+
         context->master->GetConfigurator().Apply(motor_config);
         context->follower->GetConfigurator().Apply(motor_config);
     }
@@ -47,10 +44,13 @@ public:
         unmanaged::FeedEnable(50);
 
         double target = 0;
-        if (context->safe_to_run->load()) target = context->throttle->load();
+        if (context->safe_to_run->load())
+            target = context->throttle->load();
 
-        if (target < current_target) current_target = target;
-        else current_target += (target - current_target) * LERP_PER_ITER;
+        if (target < current_target)
+            current_target = target;
+        else
+            current_target += (target - current_target) * LERP_PER_ITER;
 
         double target_tps = current_target * 100.0;
         context->target_tps->store(target_tps);

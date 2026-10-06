@@ -1,10 +1,14 @@
 #ifndef __PLUGIN_INTERFACE_HPP
 #define __PLUGIN_INTERFACE_HPP
 
-namespace spdlog { class logger; }
+namespace spdlog {
+    class logger;
+}
 namespace ctre::phoenix6 {
     class CANBus;
-    namespace hardware { class TalonFX; }
+    namespace hardware {
+        class TalonFX;
+    }
 }
 
 struct PluginContext {
@@ -38,15 +42,15 @@ public:
 };
 
 #define PUBLIC_SYMBOL __attribute__((visibility("default")))
-#define ADD_PLUGIN_SYMBOLS(class_name)                              \
-extern "C" {                                                        \
-    PUBLIC_SYMBOL Plugin *create(const PluginContext *context) {    \
-        return new class_name(context);                             \
-    }                                                               \
-    PUBLIC_SYMBOL void destroy(Plugin *plugin) {                    \
-        delete plugin;                                              \
-    }                                                               \
-}
+#define ADD_PLUGIN_SYMBOLS(class_name)                               \
+    extern "C" {                                                     \
+        PUBLIC_SYMBOL Plugin *create(const PluginContext *context) { \
+            return new class_name(context);                          \
+        }                                                            \
+        PUBLIC_SYMBOL void destroy(Plugin *plugin) {                 \
+            delete plugin;                                           \
+        }                                                            \
+    }
 
 typedef Plugin *(*CreatePluginFn)(const PluginContext *);
 typedef void (*DestroyPluginFn)(Plugin *);

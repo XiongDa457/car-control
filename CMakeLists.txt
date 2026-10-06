@@ -38,7 +38,7 @@ add_subdirectory(external/json)
 add_executable(car_host
     src/main.cpp
 )
-target_include_directories(car_host PRIVATE include)
+target_include_directories(car_host PRIVATE ./include)
 target_link_libraries(car_host
 PRIVATE
     PkgConfig::LIBSYSTEMD
@@ -52,7 +52,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR_PRE}/plugin)
 add_library(control MODULE
     src/plugin/control.cpp
 )
-target_include_directories(control PRIVATE include)
+target_include_directories(control PRIVATE ./include)
 target_link_libraries(control
 PRIVATE
     phoenix6
@@ -62,7 +62,7 @@ PRIVATE
 add_library(read MODULE
     src/plugin/read.cpp
 )
-target_include_directories(read PRIVATE include)
+target_include_directories(read PRIVATE ./include)
 target_link_libraries(read
 PRIVATE
     spdlog::spdlog
@@ -71,7 +71,7 @@ PRIVATE
 add_library(telemetry MODULE
     src/plugin/telemetry.cpp
 )
-target_include_directories(telemetry PRIVATE include)
+target_include_directories(telemetry PRIVATE ./include)
 target_link_libraries(telemetry
 PRIVATE
     phoenix6

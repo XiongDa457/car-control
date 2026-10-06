@@ -1,18 +1,22 @@
-#include <unistd.h>
+#include <csignal>
 #include <dlfcn.h>
 #include <filesystem>
-#include <csignal>
+#include <poll.h>
 #include <sys/inotify.h>
+#include <unistd.h>
 
+#include <ctre/phoenix/cci/Diagnostics_CCI.h>
+#include <ctre/phoenix6/SignalLogger.hpp>
 #include <ctre/phoenix6/TalonFX.hpp>
 #include <ctre/phoenix6/controls/Follower.hpp>
-#include <ctre/phoenix6/SignalLogger.hpp>
 #include <ctre/phoenix6/unmanaged/Unmanaged.hpp>
 
 #include <spdlog/logger.h>
 #include <spdlog/sinks/systemd_sink.h>
 
 #include "plugin/interface.hpp"
+
+#define WATCHER_TIMEOUT_MS 100
 
 namespace fs = std::filesystem;
 using namespace ctre::phoenix;
@@ -29,7 +33,7 @@ int pin_thread(int core_id) {
 }
 
 int set_priority(int priority) {
-    struct sched_param param;
+    sched_param param;
     param.sched_priority = priority;
 
     pthread_t current_thread = pthread_self();
@@ -54,6 +58,7 @@ struct PluginSettings {
 class PluginManager {
 private:
     bool first_load = true;
+    std::atomic<bool> loaded{false};
 
     const char *name;
     fs::path tmp_path;
@@ -70,7 +75,8 @@ private:
     std::jthread *thread;
 
     void loop(std::stop_token stoken) {
-        if (!plugin) return;
+        if (!plugin)
+            return;
 
         auto next_wakeup = std::chrono::steady_clock::now();
         const auto interval = std::chrono::milliseconds(settings->loop_ms);
@@ -83,40 +89,50 @@ private:
         }
     }
 
-    void exec_once() {
-        if (plugin) plugin->run();
-    }
-
     void run(std::stop_token stoken) {
-        if (settings->pin_core > -1) pin_thread(settings->pin_core);
-        if (settings->priority > -1) set_priority(settings->priority);
+        logger->info("Starting \"{}\" plugin", name);
 
-        logger->info("Starting \"\" plugin", name);
-        if (settings->loop_ms > 0) loop(stoken);
-        else exec_once();
+        if (settings->pin_core > -1) {
+            int res = pin_thread(settings->pin_core);
+            if (res)
+                logger->warn("Failed to pin \"{}\" plugin to core {}: {}", name, settings->pin_core, strerror(res));
+        }
+        if (settings->priority > -1) {
+            int res = set_priority(settings->priority);
+            if (res)
+                logger->warn("Failed set priority for \"{}\" plugin to {}: {}", name, settings->priority, strerror(res));
+        }
+
+        if (settings->loop_ms > 0)
+            loop(stoken);
+        else
+            plugin->run();
     }
 
-    void stop() {
-        logger->info("Stopping \"\" plugin", name);
-        if (settings->loop_ms <= 0) plugin->stop();
+    void unload() {
+        if (!loaded.load())
+            return;
+
+        logger->info("Unloading \"{}\" plugin", name);
+
+        if (settings->loop_ms <= 0)
+            plugin->stop();
         delete thread;
-        logger->info("Stopped \"\" plugin", name);
+
+        destroy(plugin);
+        dlclose(dl_handle);
+
+        loaded.store(false);
     }
 
 public:
     void reload() {
-        stop();
-
         if (first_load) {
             logger->info("Loading \"{}\" plugin", name);
             first_load = false;
-        }
-        else logger->info("Reloading \"{}\" plugin", name);
-
-        if (plugin) {
-            destroy(plugin);
-            dlclose(dl_handle);
-            plugin = nullptr;
+        } else {
+            logger->info("Reloading \"{}\" plugin", name);
+            unload();
         }
 
         try {
@@ -125,7 +141,7 @@ public:
             logger->error("Error copying {} to tmp location: {}", settings->path, e.what());
             return;
         }
-
+ 
         dl_handle = dlopen(tmp_path.c_str(), RTLD_LAZY);
         if (!dl_handle) {
             logger->error("Error loading \"{}\" plugin:\n{}", name, dlerror());
@@ -133,8 +149,8 @@ public:
         }
         dlerror();
 
-        CreatePluginFn create = (CreatePluginFn) dlsym(dl_handle, "create");
-        destroy = (DestroyPluginFn) dlsym(dl_handle, "destroy");
+        CreatePluginFn create = (CreatePluginFn)dlsym(dl_handle, "create");
+        destroy = (DestroyPluginFn)dlsym(dl_handle, "destroy");
         const char *err = dlerror();
         if (err) {
             logger->error("Error finding create/destroy symbols in \"{}\" plugin", name);
@@ -143,8 +159,9 @@ public:
         }
 
         plugin = create(context);
-        
         thread = new std::jthread(&PluginManager::run, this);
+
+        loaded.store(true);
     }
 
     PluginManager(const PluginSettings *settings, const PluginContext *context) {
@@ -157,19 +174,12 @@ public:
         fs::path plugin_path(settings->path);
         tmp_path = fs::temp_directory_path() / plugin_path.filename();
         reload();
-
-        thread = new std::jthread(&PluginManager::run, this);
     }
 
     ~PluginManager() {
-        stop();
+        unload();
 
-        if (plugin) {
-            destroy(plugin);
-            dlclose(dl_handle);
-        }
-
-        if (fs::exists(tmp_path) && fs::is_regular_file(tmp_path)) 
+        if (fs::exists(tmp_path) && fs::is_regular_file(tmp_path))
             fs::remove(tmp_path);
     }
 };
@@ -201,29 +211,42 @@ int fd, wd[NUM_PLUGINS];
 PluginManager *plugin_managers[NUM_PLUGINS]{};
 
 void watcher_thread(std::stop_token stoken) {
-    if (fd < 0) return;
+    if (fd < 0)
+        return;
     for (int i = 0; i < NUM_PLUGINS; i++) {
-        if (wd[i] < 0) return;
+        if (wd[i] < 0)
+            return;
     }
 
     constexpr size_t EVENT_SIZE = sizeof(inotify_event);
     constexpr size_t BUF_LEN = 32 * (EVENT_SIZE + 16);
     char buffer[BUF_LEN];
 
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+
     while (!stoken.stop_requested()) {
-        int length = read(fd, buffer, sizeof(buffer));
-        if (length < 0) {
-            logger->error("Error reading inotify events");
+        pfd.revents = 0;
+
+        int res = poll(&pfd, 1, WATCHER_TIMEOUT_MS);
+        if (res == 0)
+            continue;
+        if (res < 0) {
+            logger->error("Error while filewatching");
             break;
         }
-
-        int i = 0;
-        while (i < length) {
-            inotify_event *event = (inotify_event *)&buffer[i];
-            for (int i = 0; i < NUM_PLUGINS; i++) {
-                if (wd[i] == event->wd) plugin_managers[i]->reload();
+        if (pfd.revents & POLLIN) {
+            int length = read(fd, buffer, sizeof(buffer));
+            int i = 0;
+            while (i < length) {
+                inotify_event *event = (inotify_event *)&buffer[i];
+                for (int i = 0; i < NUM_PLUGINS; i++) {
+                    if (wd[i] == event->wd)
+                        plugin_managers[i]->reload();
+                }
+                i += EVENT_SIZE + event->len;
             }
-            i += EVENT_SIZE + event->len;
         }
     }
 }
@@ -239,18 +262,21 @@ int main() {
     std::shared_ptr<spdlog::logger> shared_logger = spdlog::systemd_logger_mt("journal");
     logger = shared_logger.get();
 
+    c_Phoenix_Diagnostics_SetSecondsToStart(-1);
     unmanaged::LoadPhoenix();
     SignalLogger::EnableAutoLogging(false);
 
-    sleep(8);
+    sleep(5);
 
     CANBus can_bus{"can0"};
-    
+
     hardware::TalonFX master{0, can_bus};
     hardware::TalonFX follower{1, can_bus};
 
     controls::Follower follow_request{0, false};
     follower.SetControl(follow_request);
+
+    sleep(1);
 
     std::atomic<bool> safe_to_run{false};
     std::atomic<double> throttle{0.0};
@@ -268,15 +294,15 @@ int main() {
         .target_tps = &target_tps,
     };
 
-    sleep(2);
-
-    int fd = inotify_init();
-    if (fd < 0) logger->error("Error initializing inotify");
+    fd = inotify_init();
+    if (fd < 0)
+        logger->error("Error initializing inotify");
     for (int i = 0; i < NUM_PLUGINS; i++) {
-        plugin_managers[i] = new PluginManager(&plugin_settings[i], &context);
+        plugin_managers[i] = new PluginManager(&(plugin_settings[i]), &context);
         if (fd >= 0) {
             wd[i] = inotify_add_watch(fd, plugin_settings[i].path, IN_CLOSE_WRITE);
-            if (wd[i] < 0) logger->error("Error adding inotify watch");
+            if (wd[i] < 0)
+                logger->error("Error adding inotify watch");
         }
     }
 
@@ -285,11 +311,17 @@ int main() {
     int sig = 0;
     sigwait(&sigset, &sig);
 
+    watcher.request_stop();
+    if (watcher.joinable())
+        watcher.join();
+
     for (int i = 0; i < NUM_PLUGINS; i++) {
         delete plugin_managers[i];
-        if (fd >= 0 && wd[i] >= 0) inotify_rm_watch(fd, wd[i]);
+        if (fd >= 0 && wd[i] >= 0)
+            inotify_rm_watch(fd, wd[i]);
     }
-    if (fd >= 0) close(fd);
+    if (fd >= 0)
+        close(fd);
 
     logger->info("Finished cleanup");
 }

@@ -1,6 +1,7 @@
-#include <unistd.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <termios.h>
+#include <unistd.h>
 
 #include <spdlog/logger.h>
 
@@ -15,9 +16,16 @@ using namespace ctre::phoenix6;
 #define RAW_THROTTLE_HI 840
 constexpr double RAW_THROTTLE_RANGE = RAW_THROTTLE_HI - RAW_THROTTLE_LOW;
 
+#define TIMEOUT_MS 10
+#define UNSAFE_ERROR_COUNT 5
+#define RE_LOG_COUNT 100
+#define FIX_COUNT 50
+
 double interpolate(int val) {
-    if (val < RAW_THROTTLE_LOW) val = RAW_THROTTLE_LOW;
-    else if (val > RAW_THROTTLE_HI) val = RAW_THROTTLE_HI;
+    if (val < RAW_THROTTLE_LOW)
+        val = RAW_THROTTLE_LOW;
+    else if (val > RAW_THROTTLE_HI)
+        val = RAW_THROTTLE_HI;
     return pow((val - RAW_THROTTLE_LOW) / RAW_THROTTLE_RANGE, 2.0f);
 }
 
@@ -49,45 +57,59 @@ public:
         cfmakeraw(&options);
         cfsetispeed(&options, BAUD_RATE);
 
-        options.c_cc[VMIN] = 1;
-        options.c_cc[VTIME] = 1;
+        options.c_cc[VMIN] = 0;
+        options.c_cc[VTIME] = 0;
+        options.c_cflag |= (CLOCAL | CREAD);
 
         tcsetattr(arduino_fd, TCSANOW, &options);
 
-        context->throttle->store(0);
-        context->safe_to_run->store(true);
+        struct pollfd pfd;
+        pfd.fd = arduino_fd;
+        pfd.events = POLLIN;
 
         int64_t error_counter = 0;
         int8_t fix_counter = 0;
         uint8_t single_byte;
+
+        context->throttle->store(0);
+        context->safe_to_run->store(true);
         while (running.load()) {
-            int res = read(arduino_fd, &single_byte, 1);
-            if (res == 0) {
-                fix_counter = 0;
-                error_counter++;
-                if (error_counter == 2) {
-                    context->throttle->store(0);
-                    context->safe_to_run->store(false);
+            pfd.revents = 0;
+
+            int res = poll(&pfd, 1, TIMEOUT_MS);
+            if (res > 0 && pfd.revents & POLLIN) {
+                if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
+                    logger->critical("Arudino device error!");
+                    break;
                 }
-                if (error_counter % 10 == 2) logger->error("Not recieving signal from arduino");
-                continue;
-            }
-            if (res < 0) {
-                logger->error("Error when reading from arduino");
-                break;
-            }
-            if (single_byte == 0x80) {
-                if (error_counter >= 5) {
-                    fix_counter++;
-                    if (fix_counter >= 10) {
-                        error_counter = 0;
-                        context->safe_to_run->store(true);
+                size_t length = read(arduino_fd, &single_byte, 1);
+                if (length > 0 && single_byte == 0x80) {
+                    if (error_counter > 0) {
+                        fix_counter++;
+                        if (fix_counter >= FIX_COUNT) {
+                            error_counter = 0;
+                            if (!context->safe_to_run->load()) {
+                                context->safe_to_run->store(true);
+                                logger->info("Recieving signal from arduino again");
+                            }
+                        }
                     }
+                    context->throttle->store(read_val());
+                    continue;
                 }
-                context->throttle->store(read_val());
             }
+            
+            fix_counter = 0;
+            error_counter++;
+            if (error_counter == UNSAFE_ERROR_COUNT) {
+                context->throttle->store(0);
+                context->safe_to_run->store(false);
+            }
+            if (error_counter % RE_LOG_COUNT == UNSAFE_ERROR_COUNT)
+                logger->critical("Not recieving signal from arduino");   
         }
 
+        context->throttle->store(0);
         context->safe_to_run->store(false);
         close(arduino_fd);
     }

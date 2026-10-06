@@ -30,7 +30,7 @@ double tps_to_wheel_speed(double tps) {
 
 class TelemetryPlugin : public Plugin {
 private:
-    httplib::Server svr;
+    httplib::Server server;
 
     void initialize() override {
         optmize_can_util(context->master);
@@ -41,7 +41,7 @@ public:
     using Plugin::Plugin;
 
     void run() override {
-        svr.Get("/get", [this](const httplib::Request& req, httplib::Response& res) {
+        server.Get("/get", [this](const httplib::Request &req, httplib::Response &res) {
             double master_tps = context->master->GetVelocity().GetValueAsDouble();
             double follower_tps = context->follower->GetVelocity().GetValueAsDouble();
 
@@ -50,30 +50,32 @@ public:
                 {"throttle", context->throttle->load()},
                 {"target_tps", context->target_tps->load()},
 
-                {"motor1", {
-                    {"temp", context->master->GetDeviceTemp().GetValueAsDouble()},
-                    {"voltage", context->master->GetSupplyVoltage().GetValueAsDouble()},
-                    {"current", context->master->GetSupplyCurrent().GetValueAsDouble()},
-                    {"tps", master_tps},
-                    {"wheel_speed", tps_to_wheel_speed(master_tps)},
-                }},
-                {"motor2", {
-                    {"temp", context->follower->GetDeviceTemp().GetValueAsDouble()},
-                    {"voltage", context->follower->GetSupplyVoltage().GetValueAsDouble()},
-                    {"current", context->follower->GetSupplyCurrent().GetValueAsDouble()},
-                    {"tps", follower_tps},
-                    {"wheel_speed", tps_to_wheel_speed(follower_tps)},
-                }},
+                {"motor1",
+                    {
+                        {"temp", context->master->GetDeviceTemp().GetValueAsDouble()},
+                        {"voltage", context->master->GetSupplyVoltage().GetValueAsDouble()},
+                        {"current", context->master->GetSupplyCurrent().GetValueAsDouble()},
+                        {"tps", master_tps},
+                        {"wheel_speed", tps_to_wheel_speed(master_tps)},
+                    }},
+                {"motor2",
+                    {
+                        {"temp", context->follower->GetDeviceTemp().GetValueAsDouble()},
+                        {"voltage", context->follower->GetSupplyVoltage().GetValueAsDouble()},
+                        {"current", context->follower->GetSupplyCurrent().GetValueAsDouble()},
+                        {"tps", follower_tps},
+                        {"wheel_speed", tps_to_wheel_speed(follower_tps)},
+                    }},
             };
             res.set_content(j.dump(), "application/json");
         });
         logger->info("Telemetry server listening on port 8080");
-        svr.listen("0.0.0.0", 8080);
+        server.listen("0.0.0.0", 8080);
     }
 
     void stop() override {
         logger->info("Stopping telemetry server");
-        svr.stop();
+        server.stop();
     }
 };
 
