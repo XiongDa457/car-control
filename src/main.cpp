@@ -123,6 +123,7 @@ private:
         dlclose(dl_handle);
 
         loaded.store(false);
+        logger->info("Unloaded \"{}\" plugin", name);
     }
 
 public:
@@ -266,7 +267,7 @@ int main() {
     unmanaged::LoadPhoenix();
     SignalLogger::EnableAutoLogging(false);
 
-    sleep(5);
+    sleep(4);
 
     CANBus can_bus{"can0"};
 

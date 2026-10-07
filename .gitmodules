@@ -1,6 +1,6 @@
-[submodule "external/cpp-httplib"]
-	path = external/cpp-httplib
-	url = https://github.com/yhirose/cpp-httplib.git
-[submodule "external/json"]
-	path = external/json
-	url = https://github.com/nlohmann/json.git
+[submodule "external/glaze"]
+	path = external/glaze
+	url = https://github.com/stephenberry/glaze.git
+[submodule "external/uWebSockets"]
+	path = external/uWebSockets
+	url = https://github.com/uNetworking/uWebSockets.git

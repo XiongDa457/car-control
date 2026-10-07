@@ -1,27 +1,34 @@
 #include <ctre/phoenix6/TalonFX.hpp>
 #include <spdlog/logger.h>
 
-#include <httplib.h>
-#include <nlohmann/json.hpp>
+#include <App.h>
+#include <glaze/json.hpp>
 
 #include "plugin/interface.hpp"
 
 using namespace ctre::phoenix6;
 
-#define UPDATE_FREQ 50_Hz
+#define CAN_UPDATE_FREQ 50_Hz
 
 #define GEARBOX_RATIO 0.224
 #define GEARBOX_SPROCKET 15
 #define WHEEL_SPROCKET 45
 #define WHEEL_DIAMETER 0.508
 
+#define SERVER_PORT 8080
+#define SERVER_SEND_MS 20
+
+struct PerSocketData {
+    int _;
+};
+
 void optmize_can_util(hardware::TalonFX *motor) {
     motor->ResetSignalFrequencies();
     motor->OptimizeBusUtilization(0_Hz);
-    motor->GetVelocity().SetUpdateFrequency(UPDATE_FREQ);
-    motor->GetDeviceTemp().SetUpdateFrequency(UPDATE_FREQ);
-    motor->GetSupplyVoltage().SetUpdateFrequency(UPDATE_FREQ);
-    motor->GetSupplyCurrent().SetUpdateFrequency(UPDATE_FREQ);
+    motor->GetVelocity().SetUpdateFrequency(CAN_UPDATE_FREQ);
+    motor->GetDeviceTemp().SetUpdateFrequency(CAN_UPDATE_FREQ);
+    motor->GetSupplyVoltage().SetUpdateFrequency(CAN_UPDATE_FREQ);
+    motor->GetSupplyCurrent().SetUpdateFrequency(CAN_UPDATE_FREQ);
 }
 
 double tps_to_wheel_speed(double tps) {
@@ -30,7 +37,8 @@ double tps_to_wheel_speed(double tps) {
 
 class TelemetryPlugin : public Plugin {
 private:
-    httplib::Server server;
+    std::atomic<uWS::Loop*> event_loop;
+    std::atomic<us_listen_socket_t*> listen_socket;
 
     void initialize() override {
         optmize_can_util(context->master);
@@ -41,41 +49,47 @@ public:
     using Plugin::Plugin;
 
     void run() override {
-        server.Get("/get", [this](const httplib::Request &req, httplib::Response &res) {
-            double master_tps = context->master->GetVelocity().GetValueAsDouble();
-            double follower_tps = context->follower->GetVelocity().GetValueAsDouble();
+        event_loop.store(uWS::Loop::get());
 
-            nlohmann::json j = {
-                {"safeToRun", context->safe_to_run->load()},
-                {"throttle", context->throttle->load()},
-                {"target_tps", context->target_tps->load()},
+        {
+            uWS::App app = uWS::App().ws<PerSocketData>("/connect", {
+                .compression = uWS::SHARED_COMPRESSOR,
+                .maxPayloadLength = 16 * 1024,
+                .idleTimeout = 10,
+                .maxBackpressure = 1 * 1024 * 1024,
+                .upgrade = [](auto *res, auto *req, auto *context) {
+                    res->template upgrade<PerSocketData>({},
+                        req->getHeader("sec-websocket-key"),
+                        req->getHeader("sec-websocket-protocol"),
+                        req->getHeader("sec-websocket-extensions"),
+                        context
+                    );
+                },
+                .open = [](auto *ws) {
+                },
+                .message = [](auto *ws, std::string_view message, uWS::OpCode opCode) { ws->send(message, opCode); },
+                .drain = [](auto *ws) {},
+                .ping = [](auto *ws, std::string_view message) {},
+                .pong = [](auto *ws, std::string_view message) {},
+                .close = [](auto *ws, int code, std::string_view message) {}
+            }).listen(SERVER_PORT, [this](auto *token) {
+                if (token) {
+                    logger->info("Websockets telemetry server listening on port {}", SERVER_PORT);
+                    listen_socket = token;
+                }
+            }).run();
+            app.close();
+        }
 
-                {"motor1",
-                    {
-                        {"temp", context->master->GetDeviceTemp().GetValueAsDouble()},
-                        {"voltage", context->master->GetSupplyVoltage().GetValueAsDouble()},
-                        {"current", context->master->GetSupplyCurrent().GetValueAsDouble()},
-                        {"tps", master_tps},
-                        {"wheel_speed", tps_to_wheel_speed(master_tps)},
-                    }},
-                {"motor2",
-                    {
-                        {"temp", context->follower->GetDeviceTemp().GetValueAsDouble()},
-                        {"voltage", context->follower->GetSupplyVoltage().GetValueAsDouble()},
-                        {"current", context->follower->GetSupplyCurrent().GetValueAsDouble()},
-                        {"tps", follower_tps},
-                        {"wheel_speed", tps_to_wheel_speed(follower_tps)},
-                    }},
-            };
-            res.set_content(j.dump(), "application/json");
-        });
-        logger->info("Telemetry server listening on port 8080");
-        server.listen("0.0.0.0", 8080);
+        event_loop.load()->free();
+        logger->info("Telemetry server stopped");
     }
 
     void stop() override {
-        logger->info("Stopping telemetry server");
-        server.stop();
+        event_loop.load()->defer([this]() {
+            if (listen_socket.load())
+                us_listen_socket_close(0, listen_socket.load());
+        });
     }
 };
 

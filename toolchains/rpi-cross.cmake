@@ -15,20 +15,19 @@ list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES RPI_SYSROOT TOOLCHAIN_DIR TARGE
 set(CMAKE_SYSROOT ${RPI_SYSROOT})
 set(CMAKE_FIND_ROOT_PATH ${RPI_SYSROOT})
 
-set(MULTIARCH_PATH "${RPI_SYSROOT}/usr/lib/aarch64-linux-gnu")
-set(GLOBAL_CXX_FLAGS "-nostdinc++ \
+set(CMAKE_CXX_FLAGS "-nostdinc++ \
     -isystem ${RPI_SYSROOT}/usr/include/c++/14 \
-    -isystem ${RPI_SYSROOT}/usr/include/aarch64-linux-gnu/c++/14")
-set(GLOBAL_LINK_FLAGS "--sysroot=${RPI_SYSROOT} \
-    -nostdlib++ \
-    -B${MULTIARCH_PATH} -L${MULTIARCH_PATH} \
-    -Wl,-rpath-link=${MULTIARCH_PATH} \
-    -L${RPI_SYSROOT}/usr/lib/aarch64-linux-gnu -lstdc++")
+    -isystem ${RPI_SYSROOT}/usr/include/aarch64-linux-gnu/c++/14" CACHE STRING "" FORCE)
 
-set(CMAKE_CXX_FLAGS ${GLOBAL_CXX_FLAGS} CACHE STRING "" FORCE)
-set(CMAKE_EXE_LINKER_FLAGS ${GLOBAL_LINK_FLAGS} CACHE STRING "" FORCE)
-set(CMAKE_SHARED_LINKER_FLAGS ${GLOBAL_LINK_FLAGS} CACHE STRING "" FORCE)
-set(CMAKE_MODULE_LINKER_FLAGS ${GLOBAL_LINK_FLAGS} CACHE STRING "" FORCE)
+set(MULTIARCH_PATH "${RPI_SYSROOT}/usr/lib/aarch64-linux-gnu")
+set(GCC_14_PATH "${RPI_SYSROOT}/usr/lib/gcc/aarch64-linux-gnu/14")
+set(GLOBAL_LINK_FLAGS "--sysroot=${RPI_SYSROOT} \
+    -B${MULTIARCH_PATH} -L${MULTIARCH_PATH} \
+    -B${GCC_14_PATH} -L${GCC_14_PATH} \
+    -Wl,-rpath-link=${MULTIARCH_PATH}")
+
+set(CMAKE_C_LINK_FLAGS ${GLOBAL_LINK_FLAGS})
+set(CMAKE_CXX_LINK_FLAGS "${GLOBAL_LINK_FLAGS} -nostdlib++ -lstdc++")
 
 include_directories(
     ${RPI_SYSROOT}/usr/include

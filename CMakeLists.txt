@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.31)
+cmake_policy(SET CMP0210 NEW)
 
-project(auto-club CXX)
+project(auto-club C CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
@@ -12,7 +13,7 @@ add_compile_options(-Wno-psabi -O3)
 
 set(BUILD_SHARED_LIBS ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/dist")
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/dist/plugin")
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBSYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
@@ -26,14 +27,41 @@ set_target_properties(phoenix6 PROPERTIES
 find_package(spdlog REQUIRED)
 add_compile_definitions(SPDLOG_DISABLE_DEFAULT_LOGGER)
 
-set(PREV_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
-set(BUILD_SHARED_LIBS OFF)
-set(HTTPLIB_COMPILE ON)
-add_subdirectory(external/cpp-httplib)
-set_property(TARGET httplib PROPERTY POSITION_INDEPENDENT_CODE ON)
-set(BUILD_SHARED_LIBS ${PREV_BUILD_SHARED_LIBS})
+find_package(OpenSSL REQUIRED)
+find_package(ZLIB REQUIRED)
 
-add_subdirectory(external/json)
+set(USOCKETS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/uWebSockets/uSockets")
+file(GLOB USOCKETS_SOURCES
+    "${USOCKETS_SOURCE_DIR}/src/*.c"
+    "${USOCKETS_SOURCE_DIR}/src/eventing/*.c"
+    "${USOCKETS_SOURCE_DIR}/src/crypto/*.c"
+)
+
+message("uSocket sources: ${USOCKET_SOURCES}")
+add_library(uSockets STATIC ${USOCKETS_SOURCES})
+target_include_directories(uSockets PUBLIC "${USOCKETS_SOURCE_DIR}/src")
+target_compile_definitions(uSockets PUBLIC
+    LIBUS_USE_EPOLL
+    LIBUS_NO_SSL=1
+)
+target_link_libraries(uSockets PUBLIC
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    ZLIB::ZLIB
+)
+set_target_properties(uSockets PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+)
+
+add_library(uWebSockets INTERFACE)
+target_include_directories(uWebSockets INTERFACE
+    external/uWebSockets/src
+    external/uWebSockets/uSockets/src
+)
+target_link_libraries(uWebSockets INTERFACE)
+
+add_subdirectory(external/glaze)
+
 
 add_executable(car_host
     src/main.cpp
@@ -45,9 +73,6 @@ PRIVATE
     phoenix6
     spdlog::spdlog
 )
-
-set(OUTPUT_DIR_PRE ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR_PRE}/plugin)
 
 add_library(control MODULE
     src/plugin/control.cpp
@@ -76,11 +101,10 @@ target_link_libraries(telemetry
 PRIVATE
     phoenix6
     spdlog::spdlog
-    httplib::httplib
-    nlohmann_json::nlohmann_json
+    uWebSockets
+    uSockets
+    glaze::glaze
 )
-
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR_PRE})
 
 CHECK_VAR(RPI_HOST "Hostname of the raspberry pi")
 CHECK_VAR(RPI_USER "User to login on the raspberry pi")
