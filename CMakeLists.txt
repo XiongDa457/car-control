@@ -9,7 +9,7 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_var.cmake)
 
-add_compile_options(-Wno-psabi -O3)
+add_compile_options(-Wno-psabi)
 
 set(BUILD_SHARED_LIBS ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/dist")
@@ -110,20 +110,9 @@ CHECK_VAR(RPI_HOST "Hostname of the raspberry pi")
 CHECK_VAR(RPI_USER "User to login on the raspberry pi")
 CHECK_VAR(RPI_DEST "Destination path on the raspberry pi for deployment")
 
-add_custom_target(build_all
-    COMMENT "Building all components"
-    DEPENDS car_host control read telemetry
-)
-
 add_custom_target(deploy
     COMMAND ssh ${RPI_USER}@${RPI_HOST} "mkdir -p ${RPI_DEST}"
     COMMAND rsync -avz ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/ ${RPI_USER}@${RPI_HOST}:${RPI_DEST}/
     COMMENT "Deploying via rsync to ${RPI_USER}@${RPI_HOST}..."
     DEPENDS car_host control read telemetry
-)
-
-add_custom_target(deploy_plugins
-    COMMAND rsync -avz ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/plugin/ ${RPI_USER}@${RPI_HOST}:${RPI_DEST}/plugin/
-    COMMENT "Deploying via rsync to ${RPI_USER}@${RPI_HOST}..."
-    DEPENDS control read telemetry
 )

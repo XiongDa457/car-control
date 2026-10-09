@@ -26,8 +26,13 @@ set(GLOBAL_LINK_FLAGS "--sysroot=${RPI_SYSROOT} \
     -B${GCC_14_PATH} -L${GCC_14_PATH} \
     -Wl,-rpath-link=${MULTIARCH_PATH}")
 
-set(CMAKE_C_LINK_FLAGS ${GLOBAL_LINK_FLAGS})
-set(CMAKE_CXX_LINK_FLAGS "${GLOBAL_LINK_FLAGS} -nostdlib++ -lstdc++")
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    set(GLOBAL_LINK_FLAGS "${GLOBAL_LINK_FLAGS} -fsanitize=address")
+endif()
+
+set(CMAKE_C_LINK_FLAGS ${GLOBAL_LINK_FLAGS} CACHE STRING "" FORCE)
+set(CMAKE_CXX_LINK_FLAGS "${GLOBAL_LINK_FLAGS} -nostdlib++ -lstdc++" CACHE STRING "" FORCE)
 
 include_directories(
     ${RPI_SYSROOT}/usr/include

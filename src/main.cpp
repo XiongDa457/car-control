@@ -19,6 +19,12 @@
 
 #define WATCHER_TIMEOUT_MS 100
 
+#ifdef NDEBUG
+#define CAN_BUS "can0"
+#else
+#define CAN_BUS "vcan0"
+#endif
+
 namespace fs = std::filesystem;
 using namespace ctre::phoenix;
 using namespace ctre::phoenix6;
@@ -137,7 +143,7 @@ public:
         }
 
         std::ostringstream ss;
-        ss << tmp_dir.c_str() << '/' << name << get_micros() << ".so";
+        ss << tmp_dir.c_str() << "/lib" << name << get_micros() << ".so";
         std::string tmp_path = ss.str();
 
         logger->info("Copying \"{}\" to \"{}\"", file_path.c_str(), tmp_path);
@@ -154,7 +160,7 @@ public:
             return;
         }
         dlerror();
-        unlink(tmp_dir.c_str());
+        unlink(tmp_path.c_str());
 
         CreatePluginFn create = (CreatePluginFn)dlsym(dl_handle, "create");
         destroy = (DestroyPluginFn)dlsym(dl_handle, "destroy");
@@ -294,7 +300,7 @@ int main() {
 
     sleep(4);
 
-    CANBus can_bus{"can0"};
+    CANBus can_bus{CAN_BUS};
 
     hardware::TalonFX master{0, can_bus};
     hardware::TalonFX follower{1, can_bus};
@@ -345,6 +351,8 @@ int main() {
         if (wd >= 0)
             inotify_rm_watch(fd, wd);
     }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
 
     logger->info("Finished cleanup");
 }
