@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <csignal>
 #include <dlfcn.h>
 #include <filesystem>
@@ -49,7 +50,6 @@ uint64_t get_micros() {
 
 struct PluginSettings {
     const char *name;
-    const char *path;
     int pin_core = -1;
     int priority = -1;
     int loop_ms = 0;
@@ -60,9 +60,10 @@ private:
     bool first_load = true;
     std::atomic<bool> loaded{false};
 
-    const char *name;
-    fs::path tmp_path;
     const PluginSettings *settings;
+    const char *name;
+
+    fs::path tmp_dir;
 
     spdlog::logger *logger;
     const PluginContext *context;
@@ -113,7 +114,7 @@ private:
         if (!loaded.load())
             return;
 
-        logger->info("Unloading \"{}\" plugin", name);
+        logger->info("Unloading old \"{}\" plugin", name);
 
         if (settings->loop_ms <= 0)
             plugin->stop();
@@ -123,10 +124,12 @@ private:
         dlclose(dl_handle);
 
         loaded.store(false);
-        logger->info("Unloaded \"{}\" plugin", name);
+        logger->info("Unloaded old \"{}\" plugin", name);
     }
 
 public:
+    std::string file_path;
+
     void reload() {
         if (first_load) {
             logger->info("Loading \"{}\" plugin", name);
@@ -136,19 +139,25 @@ public:
             unload();
         }
 
+        std::ostringstream ss;
+        ss << tmp_dir.c_str() << '/' << name << get_micros() << ".so";
+        std::string tmp_path = ss.str();
+
+        logger->info("Copying \"{}\" to {}", file_path, tmp_path);
         try {
-            fs::copy_file(settings->path, tmp_path, fs::copy_options::overwrite_existing);
+            fs::copy_file(file_path, tmp_path);
         } catch (const fs::filesystem_error &e) {
-            logger->error("Error copying {} to tmp location: {}", settings->path, e.what());
+            logger->error("Error copying {} to tmp location: {}", file_path, e.what());
             return;
         }
  
-        dl_handle = dlopen(tmp_path.c_str(), RTLD_LAZY);
+        dl_handle = dlopen(tmp_path.c_str(), RTLD_NOW);
         if (!dl_handle) {
             logger->error("Error loading \"{}\" plugin:\n{}", name, dlerror());
             return;
         }
         dlerror();
+        unlink(tmp_dir.c_str());
 
         CreatePluginFn create = (CreatePluginFn)dlsym(dl_handle, "create");
         destroy = (DestroyPluginFn)dlsym(dl_handle, "destroy");
@@ -172,16 +181,16 @@ public:
         logger = context->logger;
         this->context = context;
 
-        fs::path plugin_path(settings->path);
-        tmp_path = fs::temp_directory_path() / plugin_path.filename();
+        std::ostringstream ss;
+        ss << "./plugin/lib" << name << ".so";
+
+        file_path = ss.str();
+        tmp_dir = fs::temp_directory_path();
         reload();
     }
 
     ~PluginManager() {
         unload();
-
-        if (fs::exists(tmp_path) && fs::is_regular_file(tmp_path))
-            fs::remove(tmp_path);
     }
 };
 
@@ -190,20 +199,17 @@ spdlog::logger *logger;
 PluginSettings plugin_settings[] = {
     {
         .name = "read",
-        .path = "./plugin/libread.so",
         .pin_core = 2,
         .priority = 80,
     },
     {
         .name = "control",
-        .path = "./plugin/libcontrol.so",
         .pin_core = 3,
         .priority = 75,
         .loop_ms = 5,
     },
     {
         .name = "telemetry",
-        .path = "./plugin/libtelemetry.so",
     },
 };
 constexpr size_t NUM_PLUGINS = std::size(plugin_settings);
@@ -221,7 +227,7 @@ void watcher_thread(std::stop_token stoken) {
 
     constexpr size_t EVENT_SIZE = sizeof(inotify_event);
     constexpr size_t BUF_LEN = 32 * (EVENT_SIZE + 16);
-    char buffer[BUF_LEN];
+    alignas(inotify_event) char buffer[BUF_LEN];
 
     struct pollfd pfd;
     pfd.fd = fd;
@@ -234,18 +240,37 @@ void watcher_thread(std::stop_token stoken) {
         if (res == 0)
             continue;
         if (res < 0) {
-            logger->error("Error while filewatching");
+            if (errno == EINTR)
+                continue;
+            logger->error("Error POLLING inotify file descriptor: {}", strerror(errno));
+            break;
+        }
+        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            logger->error("Inotify file descriptor error");
             break;
         }
         if (pfd.revents & POLLIN) {
-            int length = read(fd, buffer, sizeof(buffer));
-            int i = 0;
-            while (i < length) {
-                inotify_event *event = (inotify_event *)&buffer[i];
-                for (int i = 0; i < NUM_PLUGINS; i++) {
-                    if (wd[i] == event->wd)
-                        plugin_managers[i]->reload();
+            ssize_t length = read(fd, buffer, sizeof(buffer));
+            if (length < 0) {
+                if (errno == EINTR || errno == EAGAIN)
+                    continue;
+                logger->error("Error READING inotify events: {}", strerror(errno));
+                break;
+            }
+
+            ssize_t i = 0;
+            while (i + EVENT_SIZE <= length) {
+                const inotify_event *event = (const inotify_event *)(&buffer[i]);
+
+                for (int p = 0; p < NUM_PLUGINS; p++) {
+                    if (wd[p] == event->wd)
+                        plugin_managers[p]->reload();
                 }
+                if (i + EVENT_SIZE + event->len > length) {
+                    logger->warn("Truncated inotify event received");
+                    break;
+                }
+
                 i += EVENT_SIZE + event->len;
             }
         }
@@ -301,7 +326,7 @@ int main() {
     for (int i = 0; i < NUM_PLUGINS; i++) {
         plugin_managers[i] = new PluginManager(&(plugin_settings[i]), &context);
         if (fd >= 0) {
-            wd[i] = inotify_add_watch(fd, plugin_settings[i].path, IN_CLOSE_WRITE);
+            wd[i] = inotify_add_watch(fd, plugin_managers[i]->file_path.c_str(), IN_CLOSE_WRITE);
             if (wd[i] < 0)
                 logger->error("Error adding inotify watch");
         }

@@ -37,8 +37,8 @@ double tps_to_wheel_speed(double tps) {
 
 class TelemetryPlugin : public Plugin {
 private:
-    std::atomic<uWS::Loop*> event_loop;
-    std::atomic<us_listen_socket_t*> listen_socket;
+    std::atomic<uWS::Loop*> event_loop{nullptr};
+    std::atomic<us_listen_socket_t*> listen_socket{nullptr};
 
     void initialize() override {
         optmize_can_util(context->master);
@@ -74,8 +74,8 @@ public:
                 .close = [](auto *ws, int code, std::string_view message) {}
             }).listen(SERVER_PORT, [this](auto *token) {
                 if (token) {
+                    listen_socket.store(token);
                     logger->info("Websockets telemetry server listening on port {}", SERVER_PORT);
-                    listen_socket = token;
                 }
             }).run();
             app.close();
