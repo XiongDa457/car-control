@@ -114,8 +114,6 @@ private:
         if (!loaded.load())
             return;
 
-        logger->info("Unloading old \"{}\" plugin", name);
-
         if (settings->loop_ms <= 0)
             plugin->stop();
         delete thread;
@@ -124,11 +122,10 @@ private:
         dlclose(dl_handle);
 
         loaded.store(false);
-        logger->info("Unloaded old \"{}\" plugin", name);
     }
 
 public:
-    std::string file_path;
+    fs::path file_path;
 
     void reload() {
         if (first_load) {
@@ -143,11 +140,11 @@ public:
         ss << tmp_dir.c_str() << '/' << name << get_micros() << ".so";
         std::string tmp_path = ss.str();
 
-        logger->info("Copying \"{}\" to {}", file_path, tmp_path);
+        logger->info("Copying \"{}\" to \"{}\"", file_path.c_str(), tmp_path);
         try {
             fs::copy_file(file_path, tmp_path);
         } catch (const fs::filesystem_error &e) {
-            logger->error("Error copying {} to tmp location: {}", file_path, e.what());
+            logger->error("Error copying \"{}\" to tmp location: {}", file_path.c_str(), e.what());
             return;
         }
  
@@ -190,6 +187,7 @@ public:
     }
 
     ~PluginManager() {
+        logger->info("Unloading \"{}\" plugin", name);
         unload();
     }
 };
@@ -214,16 +212,14 @@ PluginSettings plugin_settings[] = {
 };
 constexpr size_t NUM_PLUGINS = std::size(plugin_settings);
 
-int fd, wd[NUM_PLUGINS];
+int fd, wd;
 PluginManager *plugin_managers[NUM_PLUGINS]{};
 
 void watcher_thread(std::stop_token stoken) {
-    if (fd < 0)
+    if (fd < 0 || wd < 0)
         return;
-    for (int i = 0; i < NUM_PLUGINS; i++) {
-        if (wd[i] < 0)
-            return;
-    }
+
+    logger->info("Starting file watch thread");
 
     constexpr size_t EVENT_SIZE = sizeof(inotify_event);
     constexpr size_t BUF_LEN = 32 * (EVENT_SIZE + 16);
@@ -262,19 +258,23 @@ void watcher_thread(std::stop_token stoken) {
             while (i + EVENT_SIZE <= length) {
                 const inotify_event *event = (const inotify_event *)(&buffer[i]);
 
-                for (int p = 0; p < NUM_PLUGINS; p++) {
-                    if (wd[p] == event->wd)
-                        plugin_managers[p]->reload();
+                if (event->mask & IN_MOVED_TO) {
+                    for (int i = 0; i < NUM_PLUGINS; i++) {
+                        if (event->name == plugin_managers[i]->file_path.filename())
+                            plugin_managers[i]->reload();
+                    }
                 }
+
                 if (i + EVENT_SIZE + event->len > length) {
                     logger->warn("Truncated inotify event received");
                     break;
                 }
-
                 i += EVENT_SIZE + event->len;
             }
         }
     }
+
+    logger->info("File watch thread stopped");
 }
 
 int main() {
@@ -323,13 +323,10 @@ int main() {
     fd = inotify_init();
     if (fd < 0)
         logger->error("Error initializing inotify");
+    else
+        wd = inotify_add_watch(fd, "./plugin", IN_MOVED_TO);
     for (int i = 0; i < NUM_PLUGINS; i++) {
         plugin_managers[i] = new PluginManager(&(plugin_settings[i]), &context);
-        if (fd >= 0) {
-            wd[i] = inotify_add_watch(fd, plugin_managers[i]->file_path.c_str(), IN_CLOSE_WRITE);
-            if (wd[i] < 0)
-                logger->error("Error adding inotify watch");
-        }
     }
 
     std::jthread watcher(watcher_thread);
@@ -341,13 +338,13 @@ int main() {
     if (watcher.joinable())
         watcher.join();
 
-    for (int i = 0; i < NUM_PLUGINS; i++) {
+    for (int i = 0; i < NUM_PLUGINS; i++)
         delete plugin_managers[i];
-        if (fd >= 0 && wd[i] >= 0)
-            inotify_rm_watch(fd, wd[i]);
-    }
-    if (fd >= 0)
+    if (fd >= 0) {
         close(fd);
+        if (wd >= 0)
+            inotify_rm_watch(fd, wd);
+    }
 
     logger->info("Finished cleanup");
 }
