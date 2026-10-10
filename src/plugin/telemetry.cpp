@@ -18,22 +18,20 @@ using namespace ctre::phoenix6;
 #define SERVER_PORT 8080
 #define SERVER_SEND_MS 20
 
+struct MotorData {
+    double temp;
+    double voltage;
+    double current;
+    double tps;
+    double wheelSpeed;
+};
+
 struct JsonData {
     bool safeToRun;
     double throttle;
     double targetTps;
-
-    double temp1;
-    double voltage1;
-    double current1;
-    double tps1;
-    double wheelSpeed1;
-
-    double temp2;
-    double voltage2;
-    double current2;
-    double tps2;
-    double wheelSpeed2;
+    MotorData motor1;
+    MotorData motor2;
 };
 
 struct PerSocketData { int _; };
@@ -49,6 +47,17 @@ void optmize_can_util(hardware::TalonFX *motor) {
 
 double tps_to_wheel_speed(double tps) {
     return tps * GEARBOX_RATIO * GEARBOX_SPROCKET / WHEEL_SPROCKET * WHEEL_DIAMETER * M_PI * 3.6;
+}
+
+MotorData get_motor_data(hardware::TalonFX *motor) {
+    double motor2_tps = motor->GetVelocity().GetValueAsDouble();
+    return {
+        .temp = motor->GetDeviceTemp().GetValueAsDouble(),
+        .voltage = motor->GetSupplyVoltage().GetValueAsDouble(),
+        .current = motor->GetSupplyCurrent().GetValueAsDouble(),
+        .tps = motor2_tps,
+        .wheelSpeed = tps_to_wheel_speed(motor2_tps),
+    };
 }
 
 class TelemetryPlugin : public Plugin {
@@ -72,24 +81,12 @@ private:
             if (!ready.load())
                 continue;
 
-            double motor1_tps = context->master->GetVelocity().GetValueAsDouble();
-            double motor2_tps = context->follower->GetVelocity().GetValueAsDouble();
             JsonData data = {
                 .safeToRun = context->safe_to_run->load(),
                 .throttle = context->throttle->load(),
                 .targetTps = context->target_tps->load(),
-
-                .temp1 = context->master->GetDeviceTemp().GetValueAsDouble(),
-                .voltage1 = context->master->GetSupplyVoltage().GetValueAsDouble(),
-                .current1 = context->master->GetSupplyCurrent().GetValueAsDouble(),
-                .tps1 = motor1_tps,
-                .wheelSpeed1 = tps_to_wheel_speed(motor1_tps),
-
-                .temp2 = context->master->GetDeviceTemp().GetValueAsDouble(),
-                .voltage2 = context->master->GetSupplyVoltage().GetValueAsDouble(),
-                .current2 = context->master->GetSupplyCurrent().GetValueAsDouble(),
-                .tps2 = motor2_tps,
-                .wheelSpeed2 = tps_to_wheel_speed(motor2_tps),
+                .motor1 = get_motor_data(context->master),
+                .motor2 = get_motor_data(context->follower),
             };
             std::string buffer{};
             if (!glz::write_json(data, buffer)) {
