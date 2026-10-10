@@ -63,49 +63,18 @@ MotorData get_motor_data(hardware::TalonFX *motor) {
 class TelemetryPlugin : public Plugin {
 private:
     std::atomic<uWS::Loop *> event_loop{nullptr};
-    std::atomic<uWS::App *> app_ptr{nullptr};
+    std::atomic<uWS::App *> ws_app{nullptr};
 
-    std::atomic<bool> ready{false};
+    std::atomic<bool> should_broadcast{false};
 
-    void initialize() override {
-        optmize_can_util(context->master);
-        optmize_can_util(context->follower);
-    }
+    std::atomic<std::jthread *> ws_thread{nullptr};
 
-    void broadcast_thread(std::stop_token stoken) {
-        uWS::Loop *ev_loop = event_loop.load();
-        uWS::App *app = app_ptr.load();
-
-        while (!stoken.stop_requested()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            if (!ready.load())
-                continue;
-
-            JsonData data = {
-                .safeToRun = context->safe_to_run->load(),
-                .throttle = context->throttle->load(),
-                .targetTps = context->target_tps->load(),
-                .motor1 = get_motor_data(context->master),
-                .motor2 = get_motor_data(context->follower),
-            };
-            std::string buffer{};
-            if (!glz::write_json(data, buffer)) {
-                ev_loop->defer([&app, packet = std::move(buffer)]() mutable {
-                    app->publish("telemetry", packet, uWS::OpCode::TEXT);
-                });
-            }
-        }
-    }
-
-public:
-    using Plugin::Plugin;
-
-    void run() override {
+    void run_ws() {
         uWS::Loop *ev_loop = uWS::Loop::get();
         event_loop.store(ev_loop);
 
         uWS::App *app = new uWS::App();
-        app_ptr.store(app);
+        ws_app.store(app);
 
         app->ws<PerSocketData>("/", {
             .compression = uWS::SHARED_COMPRESSOR,
@@ -120,28 +89,63 @@ public:
         });
         app->listen(SERVER_PORT, [this](auto *l_socket) {
             if (l_socket) {
-                ready.store(true);
+                should_broadcast.store(true);
                 logger->info("Websockets telemetry server listening on port {}", SERVER_PORT);
             } else
                 logger->error("Websockets telemetry server is not listening");
         });
 
-        std::jthread *broadcast = new std::jthread(&TelemetryPlugin::broadcast_thread, this);
         app->run();
-
-        delete broadcast;
         delete app;
+        
+        ev_loop->free();
+    }
 
-        event_loop.load()->free();
-        logger->info("Telemetry server stopped");
+public:
+    TelemetryPlugin(const PluginContext *context) : Plugin(context) {
+        ws_thread.store(new std::jthread(&TelemetryPlugin::run_ws, this));
+
+        optmize_can_util(context->master);
+        optmize_can_util(context->follower);
+        logger->info("Finished setting can utilization");
+    };
+
+    uint32_t loop_micros() override {
+        return 10'000;
+    }
+
+    void run() override {
+        if (!should_broadcast.load())
+            return;
+
+        JsonData data = {
+            .safeToRun = context->safe_to_run->load(),
+            .throttle = context->throttle->load(),
+            .targetTps = context->target_tps->load(),
+            .motor1 = get_motor_data(context->master),
+            .motor2 = get_motor_data(context->follower),
+        };
+        std::string buffer{};
+        if (!glz::write_json(data, buffer)) {
+            event_loop.load()->defer([this, packet = std::move(buffer)]() mutable {
+                ws_app.load()->publish("telemetry", packet, uWS::OpCode::TEXT);
+            });
+        }
     }
 
     void stop() override {
-        event_loop.load()->defer([this]() {
-            uWS::App *app = app_ptr.load();
-            if (app)
-                app->close();
-        });
+        should_broadcast.store(false);
+
+        if (event_loop.load()) {
+            event_loop.load()->defer([this]() {
+                uWS::App *app = ws_app.load();
+                if (app) {
+                    app->close();
+                    logger->info("Telemetry server stopped");
+                }
+            });
+        }
+        delete ws_thread.load();
     }
 };
 

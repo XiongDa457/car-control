@@ -28,13 +28,10 @@ protected:
     spdlog::logger *logger;
     const PluginContext *context;
 
-    virtual void initialize() {}
-
 public:
     explicit Plugin(const PluginContext *context) {
         logger = context->logger;
         this->context = context;
-        initialize();
     }
     virtual uint32_t loop_micros() { return 0; }
     virtual void run() {};

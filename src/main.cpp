@@ -176,7 +176,10 @@ public:
             return;
         }
         dlerror();
+
+#ifdef NDEBUG
         unlink(tmp_path.c_str());
+#endif
 
         CreatePluginFn create = (CreatePluginFn)dlsym(dl_handle, "create");
         destroy = (DestroyPluginFn)dlsym(dl_handle, "destroy");

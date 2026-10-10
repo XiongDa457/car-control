@@ -14,7 +14,8 @@ class ControlPlugin : public Plugin {
 private:
     double current_target = 0;
 
-    void initialize() override {
+public:
+    ControlPlugin(const PluginContext *context) : Plugin(context) {
         configs::TalonFXConfiguration motor_config =
             configs::TalonFXConfiguration{}
                 .WithCurrentLimits(
@@ -36,10 +37,9 @@ private:
 
         context->master->GetConfigurator().Apply(motor_config);
         context->follower->GetConfigurator().Apply(motor_config);
-    }
 
-public:
-    using Plugin::Plugin;
+        logger->info("Finished setting motor configs");
+    }
 
     uint32_t loop_micros() override {
         return 5'000;
