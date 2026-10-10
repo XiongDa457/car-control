@@ -29,23 +29,22 @@ double interpolate(int val) {
     return pow((val - RAW_THROTTLE_LOW) / RAW_THROTTLE_RANGE, 2.0f);
 }
 
+double read_val(int fd) {
+    uint8_t upper, lower;
+    read(fd, &upper, 1);
+    read(fd, &lower, 1);
+    return interpolate((upper << 7) | lower);
+}
+
 class ReadPlugin : public Plugin {
 private:
     std::atomic<bool> running{true};
-    int arduino_fd;
-
-    double read_val() {
-        uint8_t upper, lower;
-        read(arduino_fd, &upper, 1);
-        read(arduino_fd, &lower, 1);
-        return interpolate((upper << 7) | lower);
-    }
 
 public:
     using Plugin::Plugin;
 
     void run() override {
-        arduino_fd = open(ARDUINO_PORT, O_RDONLY | O_NOCTTY | O_NDELAY);
+        int arduino_fd = open(ARDUINO_PORT, O_RDONLY | O_NOCTTY | O_NDELAY);
         if (arduino_fd < 0) {
             logger->error("Error when opening serial port for arduino");
             return;
@@ -94,7 +93,7 @@ public:
                             }
                         }
                     }
-                    context->throttle->store(read_val());
+                    context->throttle->store(read_val(arduino_fd));
                     continue;
                 }
             }

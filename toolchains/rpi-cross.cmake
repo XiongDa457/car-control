@@ -26,7 +26,7 @@ set(GLOBAL_LINK_FLAGS "--sysroot=${RPI_SYSROOT} \
     -B${GCC_14_PATH} -L${GCC_14_PATH} \
     -Wl,-rpath-link=${MULTIARCH_PATH}")
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+if(DEFINED USE_ADDRESS_SANITIZER)
     add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
     set(GLOBAL_LINK_FLAGS "${GLOBAL_LINK_FLAGS} -fsanitize=address")
 endif()

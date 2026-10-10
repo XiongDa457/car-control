@@ -36,7 +36,9 @@ public:
         this->context = context;
         initialize();
     }
-    virtual void run() = 0;
+    virtual uint32_t loop_micros() { return 0; }
+    virtual void run() {};
+
     virtual void stop() {}
     virtual ~Plugin() = default;
 };

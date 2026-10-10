@@ -29,6 +29,30 @@ namespace fs = std::filesystem;
 using namespace ctre::phoenix;
 using namespace ctre::phoenix6;
 
+struct PluginSettings {
+    const char *name;
+    int pin_core = -1;
+    int priority = -1;
+};
+
+PluginSettings plugin_settings[] = {
+    {
+        .name = "read",
+        .pin_core = 2,
+        .priority = 80,
+    },
+    {
+        .name = "control",
+        .pin_core = 3,
+        .priority = 75,
+    },
+    {
+        .name = "telemetry",
+    },
+};
+constexpr size_t NUM_PLUGINS = std::size(plugin_settings);
+
+
 int pin_thread(int core_id) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
@@ -54,13 +78,6 @@ uint64_t get_micros() {
     return micros;
 }
 
-struct PluginSettings {
-    const char *name;
-    int pin_core = -1;
-    int priority = -1;
-    int loop_ms = 0;
-};
-
 class PluginManager {
 private:
     bool first_load = true;
@@ -82,11 +99,11 @@ private:
     std::jthread *thread;
 
     void loop(std::stop_token stoken) {
-        if (!plugin)
+        if (!loaded.load())
             return;
 
         auto next_wakeup = std::chrono::steady_clock::now();
-        const auto interval = std::chrono::milliseconds(settings->loop_ms);
+        const auto interval = std::chrono::microseconds(plugin->loop_micros());
 
         while (!stoken.stop_requested()) {
             plugin->run();
@@ -110,7 +127,7 @@ private:
                 logger->warn("Failed set priority for \"{}\" plugin to {}: {}", name, settings->priority, strerror(res));
         }
 
-        if (settings->loop_ms > 0)
+        if (plugin->loop_micros() > 0)
             loop(stoken);
         else
             plugin->run();
@@ -120,8 +137,7 @@ private:
         if (!loaded.load())
             return;
 
-        if (settings->loop_ms <= 0)
-            plugin->stop();
+        plugin->stop();
         delete thread;
 
         destroy(plugin);
@@ -199,24 +215,6 @@ public:
 };
 
 spdlog::logger *logger;
-
-PluginSettings plugin_settings[] = {
-    {
-        .name = "read",
-        .pin_core = 2,
-        .priority = 80,
-    },
-    {
-        .name = "control",
-        .pin_core = 3,
-        .priority = 75,
-        .loop_ms = 5,
-    },
-    {
-        .name = "telemetry",
-    },
-};
-constexpr size_t NUM_PLUGINS = std::size(plugin_settings);
 
 int fd, wd;
 PluginManager *plugin_managers[NUM_PLUGINS]{};

@@ -7,7 +7,8 @@
 using namespace ctre::phoenix;
 using namespace ctre::phoenix6;
 
-#define LERP_PER_ITER 0.08;
+#define MAX_ACCEL 0.6
+#define TIME_STEP 0.005
 
 class ControlPlugin : public Plugin {
 private:
@@ -40,6 +41,10 @@ private:
 public:
     using Plugin::Plugin;
 
+    uint32_t loop_micros() override {
+        return 5'000;
+    }
+
     void run() override {
         unmanaged::FeedEnable(50);
 
@@ -49,8 +54,10 @@ public:
 
         if (target < current_target)
             current_target = target;
+        else if (target - current_target < TIME_STEP * MAX_ACCEL)
+            current_target += (target - current_target);
         else
-            current_target += (target - current_target) * LERP_PER_ITER;
+            current_target += TIME_STEP * MAX_ACCEL;
 
         double target_tps = current_target * 100.0;
         context->target_tps->store(target_tps);
