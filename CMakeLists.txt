@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.31)
+cmake_minimum_required(VERSION 4.3)
 cmake_policy(SET CMP0210 NEW)
 
 project(auto-club C CXX)
@@ -72,6 +72,7 @@ PRIVATE
     PkgConfig::LIBSYSTEMD
     phoenix6
     spdlog::spdlog
+    stdc++
 )
 
 add_library(control MODULE
